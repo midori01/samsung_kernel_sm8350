@@ -1,65 +1,132 @@
-name: Build
-
+name: Build and Release
 on:
   workflow_dispatch:
-  pull_request:
-  push:
-    branches:
-      - 'lineage-22.2'
+    inputs:
+      release_name:
+        description: "Release Title"
+        required: true
+        default: "Midori Kernel"
+      ksu_repo:
+        description: "KSU Repo"
+        type: choice
+        required: true
+        default: "MidoriKSU"
+        options:
+          - MidoriKSU
+          - backslashxx
+      ksu_branch:
+        description: "KSU Branch (backslashxx)"
+        type: choice
+        required: true
+        default: "master"
+        options:
+          - master
+          - staging
+      enable_manual_hooks:
+        description: "Manual Hooks"
+        type: boolean
+        required: true
+        default: true
+      enable_midori:
+        description: "Midori Customization"
+        type: boolean
+        required: true
+        default: true
 
 jobs:
-  build_lavender:
+  build_kernel:
     runs-on: ubuntu-latest
-
-    strategy:
-      fail-fast: false
-      matrix:
-        target: [SM-G9910, SM-G9960, SM-G9980]
-
+    permissions:
+      contents: write
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v4
-        
+        uses: actions/checkout@v6
+
       - name: Set up build environment
         run: |
           sudo apt update
-          DEBIAN_FRONTEND=noninteractive sudo apt install -yq \
-            attr ccache clang golang libbrotli-dev \
-            libgtest-dev libprotobuf-dev libunwind-dev libusb-1.0-0-dev libzstd-dev \
-            linux-modules-extra-$(uname -r) build-essential lld ninja-build protobuf-compiler zipalign gcc-aarch64-linux-gnu
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          
+          sudo apt install -yq ccache clang golang build-essential lld gcc-aarch64-linux-gnu zip unzip curl git
+
       - name: Fetch AOSP Clang
         run: |
-          wget https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r530567.tar.gz -O aosp-clang.tar.gz
-          mkdir clang && tar -xf aosp-clang.tar.gz -C clang && rm -rf aosp-clang.tar.gz
-          
-      - name: Fetch AnyKernel3
+          wget https://github.com/${{ github.repository }}/releases/download/toolchain/clang-r530567.tar.gz -O aosp-clang.tar.gz
+          tar -xf aosp-clang.tar.gz -C ${{ github.workspace }} --one-top-level=clang
+          echo "${{ github.workspace }}/clang/bin" >> $GITHUB_PATH
+
+      - name: Set up KernelSU
+        id: ksu_setup
         run: |
-          git clone https://github.com/LucasBlackLu/AnyKernel3 -b samsung ./Anykernel3
-          
-      - name: Build Kernel Clean
+          BRANCH=$([ "${{ github.event.inputs.ksu_repo }}" = "MidoriKSU" ] && echo "main" || echo "${{ github.event.inputs.ksu_branch }}")
+          curl -LSs "https://raw.githubusercontent.com/${{ github.event.inputs.ksu_repo }}/KernelSU/${BRANCH}/kernel/setup.sh" | bash -s ${BRANCH}
+          echo "ksu_commit=$(cd KernelSU && git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+          echo "ksu_full_commit=$(cd KernelSU && git rev-parse HEAD)" >> $GITHUB_OUTPUT
+          echo "ksu_repo=${{ github.event.inputs.ksu_repo }}" >> $GITHUB_OUTPUT
+          echo "ksu_branch=${BRANCH}" >> $GITHUB_OUTPUT
+
+      - name: Configure Hook Mode
         run: |
-          source ./build_script.sh ${{ matrix.target }}
-          cp ./AnyKernel3/Lavender* ./
-      - name: Clean Kernel Source
+          if [ "${{ github.event.inputs.enable_manual_hooks }}" = "true" ]; then
+            patch -p1 < .github/patches/scope-minimized-manual-hooks-v2.2.patch
+          else
+            echo "CONFIG_KSU_TAMPER_SYSCALL_TABLE=y" >> arch/arm64/configs/o1q_defconfig
+          fi
+
+      - name: Apply Midori Customization
+        if: ${{ github.event.inputs.enable_midori == 'true' }}
         run: |
-          make mrproper ARCH=arm64 LLVM=1
-          
-      - name: Build Kernel With KSU
+          COMMIT_COUNT=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" "https://api.github.com/repos/midori01/KernelSU/commits?per_page=1" -I 2>&1 | grep "link:" | grep -oP '&page=\K\d+(?=>; rel="last")') && NEW_KSU_VERSION=$((30000 + ${COMMIT_COUNT:-0}))
+          sed -i "s/-DKSU_VERSION=[0-9]*/-DKSU_VERSION=$NEW_KSU_VERSION/g" KernelSU/kernel/Makefile
+          sed -i 's/unsigned char buffer\[0x11\] = { 0 };/return true;\n\tunsigned char buffer[0x11] = { 0 };/g' KernelSU/kernel/manager/apk_sign.c
+          sed -i '/bool is_manager_apk(char \*path)/,$d' KernelSU/kernel/manager/apk_sign.c
+          echo -e 'bool is_manager_apk(char *path)\n{\n\tchar pkg[KSU_MAX_PACKAGE_NAME];\n\tif (get_pkg_from_apk_path(pkg, path) < 0) {\n\t\treturn false;\n\t}\n\treturn strcmp(pkg, "com.midori.supermanager") == 0;\n}' >> KernelSU/kernel/manager/apk_sign.c
+
+      - name: Build Kernel
         run: |
-          source ./build_script.sh ${{ matrix.target }} --ksu
-          cp ./AnyKernel3/Lavender* ./
-          
-      - name: Publish to GitHub
-        uses: softprops/action-gh-release@v1
+          SRC_DIR=$(pwd)
+          TC_DIR=${{ github.workspace }}/clang
+          JOBS="$(nproc --all)"
+          MAKE_PARAMS="-j$JOBS -C $SRC_DIR O=$SRC_DIR/out ARCH=arm64 CC=clang CLANG_TRIPLE=$TC_DIR/bin/aarch64-linux-gnu- LLVM=1 CROSS_COMPILE=$TC_DIR/bin/llvm-"
+          export PATH="$TC_DIR/bin:$PATH"
+          make $MAKE_PARAMS o1q_defconfig
+          make $MAKE_PARAMS
+          make $MAKE_PARAMS INSTALL_MOD_PATH=modules INSTALL_MOD_STRIP=1 modules_install
+
+      - name: Package AnyKernel3
+        run: |
+          git clone https://github.com/midori01/AnyKernel3 -b samsung AnyKernel3
+          mkdir -p AnyKernel3/modules/vendor/lib/modules/
+          find out/modules -type f -iname "*.ko" -exec cp -r {} AnyKernel3/modules/vendor/lib/modules/ \;
+          cp out/arch/arm64/boot/Image out/arch/arm64/boot/dtbo.img AnyKernel3/
+          cd AnyKernel3 && zip -r9 ../MidoriSU_SM-G9910_$(TZ='Asia/Tokyo' date +%Y%m%d-%H%M).zip . -x '*.git*' '*patch*' '*ramdisk*' 'LICENSE' 'README.md'
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v7
         with:
-          files: Lavender*
-          name: Lavender-CI_${{ github.run_id }}
-          tag_name: ${{ github.run_id }}
-          body: |
-            Kernel: 5.4.274
-            Clang: AOSP clang-r530567
+          name: Kernel
+          path: ./*.zip
+
+      - name: Generate Release Body
+        id: release_body
+        run: |
+          HOOKS_ICON="${{ github.event.inputs.enable_manual_hooks == 'true' && '✅' || '❌' }}"
+          MIDORI_ICON="${{ github.event.inputs.enable_midori == 'true' && '✅' || '❌' }}"
+          
+          cat > release_body.md << EOF
+          ## 📦 Build Information
+          - 🕐 **Build Date**: $(TZ='Asia/Tokyo' date +'%Y-%m-%d %H:%M:%S JST')
+          - 📌 **KSU Source**: ${{ steps.ksu_setup.outputs.ksu_repo }}/KernelSU:${{ steps.ksu_setup.outputs.ksu_branch }} [\`${{ steps.ksu_setup.outputs.ksu_commit }}\`](https://github.com/${{ steps.ksu_setup.outputs.ksu_repo }}/KernelSU/commit/${{ steps.ksu_setup.outputs.ksu_full_commit }})
+          - ⚙️ **Manual Hooks**: ${HOOKS_ICON} ${{ github.event.inputs.enable_manual_hooks == 'true' && 'Enabled' || 'Disabled' }}
+          - 🎨 **Midori Customization**: ${MIDORI_ICON} ${{ github.event.inputs.enable_midori == 'true' && 'Enabled' || 'Disabled' }}
+          EOF
+          
+          echo "body_path=release_body.md" >> $GITHUB_OUTPUT
+
+      - name: Publish to GitHub Releases
+        uses: softprops/action-gh-release@v3
+        with:
+          files: ./*.zip
+          name: ${{ github.event.inputs.release_name }}
+          tag_name: CI_${{ github.run_id }}
+          body_path: ${{ steps.release_body.outputs.body_path }}
         env:
-          GITHUB_TOKEN: ${{ secrets.TEST }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
