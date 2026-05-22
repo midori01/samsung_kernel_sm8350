@@ -157,3 +157,4 @@ Android.bp
 
 # Allow GitHub Actions workflow files
 !.github/
+!.github/**/*
