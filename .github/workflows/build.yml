@@ -23,6 +23,7 @@ on:
         default: "manual"
         options:
           - manual
+          - hybridized
           - hookless
       ksu_manager:
         description: "Manager"
@@ -75,7 +76,6 @@ jobs:
         run: |
           IFS=':' read -r KSU_REPO KSU_BRANCH <<< "${{ github.event.inputs.ksu_source }}"
           curl -LSs "https://raw.githubusercontent.com/${KSU_REPO}/${KSU_BRANCH}/kernel/setup.sh" | bash -s ${KSU_BRANCH}
-          echo "# CONFIG_KSU_KPROBES_KSUD is not set" >> arch/arm64/configs/o1q_defconfig
           cd KernelSU
           echo "ksu_repo=${KSU_REPO}" >> $GITHUB_OUTPUT
           echo "ksu_branch=${KSU_BRANCH}" >> $GITHUB_OUTPUT
@@ -86,6 +86,9 @@ jobs:
       - name: Configure Hook Mode
         run: |
           if [ "${{ github.event.inputs.hook_mode }}" = "manual" ]; then
+            echo "# CONFIG_KSU_KPROBES_KSUD is not set" >> arch/arm64/configs/o1q_defconfig
+            patch -p1 < .github/patches/scope-minimized-manual-hooks-v2.2.patch
+          elif [ "${{ github.event.inputs.hook_mode }}" = "hybridized" ]; then
             patch -p1 < .github/patches/scope-minimized-manual-hooks-v2.2.patch
           else
             echo "CONFIG_KSU_TAMPER_SYSCALL_TABLE=y" >> arch/arm64/configs/o1q_defconfig
@@ -130,7 +133,7 @@ jobs:
           - 🕐 **Build Date**: \`$(TZ='Asia/Tokyo' date +'%Y-%m-%d %H:%M:%S +09:00')\`
           - 📌 **KSU Source**: [\`${{ github.event.inputs.ksu_source }}\`](https://github.com/${{ steps.ksu_setup.outputs.ksu_repo }}/tree/${{ steps.ksu_setup.outputs.ksu_branch }})
           - 🔖 **Commit**: [\`${{ steps.ksu_setup.outputs.ksu_commit }}\`](https://github.com/${{ steps.ksu_setup.outputs.ksu_repo }}/commit/${{ steps.ksu_setup.outputs.ksu_full_commit }}) \`${{ steps.ksu_setup.outputs.ksu_date }}\`
-          - ⚙️ **Hook Mode**: \`${{ github.event.inputs.hook_mode == 'manual' && 'Manual Hooks' || 'Hookless' }}\`
+          - ⚙️ **Hook Mode**: \`${{ github.event.inputs.hook_mode == 'manual' && 'Manual Hooks' || github.event.inputs.hook_mode == 'hybridized' && 'Hybridized Manual Hooks' || 'Hookless' }}\`
           - 📱 **Manager**: \`${{ github.event.inputs.ksu_manager }}\`
           EOF
           echo "body_path=release_body.md" >> $GITHUB_OUTPUT
