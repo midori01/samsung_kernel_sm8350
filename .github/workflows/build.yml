@@ -11,7 +11,7 @@ on:
         description: "KSU Source"
         type: choice
         required: true
-        default: "MidoriKSU/KernelSU:main"
+        default: "backslashxx/KernelSU:master"
         options:
           - "MidoriKSU/KernelSU:main"
           - "backslashxx/KernelSU:master"
@@ -20,7 +20,7 @@ on:
         description: "Hook Mode"
         type: choice
         required: true
-        default: "manual"
+        default: "hybridized"
         options:
           - manual
           - hybridized
@@ -31,8 +31,8 @@ on:
         required: true
         default: "MidoriSU"
         options:
-          - MidoriSU
-          - KernelSU (backslashxx)
+          - MidoriSU (com.midori.supermanager)
+          - KernelSU (me.weishu.kernelsu)
 
 jobs:
   build_kernel:
