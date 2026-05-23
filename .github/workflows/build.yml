@@ -99,7 +99,6 @@ jobs:
         run: |
           COMMIT_COUNT=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" "https://api.github.com/repos/midori01/KernelSU/commits?per_page=1" -I 2>&1 | grep "link:" | grep -oP '&page=\K\d+(?=>; rel="last")') && NEW_KSU_VERSION=$((30000 + ${COMMIT_COUNT:-0}))
           sed -i "s/-DKSU_VERSION=[0-9]*/-DKSU_VERSION=$NEW_KSU_VERSION/g" KernelSU/kernel/Makefile
-          sed -i 's/unsigned char buffer\[0x11\] = { 0 };/return true;\n\tunsigned char buffer[0x11] = { 0 };/g' KernelSU/kernel/manager/apk_sign.c
           sed -i '/bool is_manager_apk(char \*path)/,$d' KernelSU/kernel/manager/apk_sign.c
           echo -e 'bool is_manager_apk(char *path)\n{\n\tchar pkg[KSU_MAX_PACKAGE_NAME];\n\tif (get_pkg_from_apk_path(pkg, path) < 0) {\n\t\treturn false;\n\t}\n\treturn strcmp(pkg, "com.midori.supermanager") == 0;\n}' >> KernelSU/kernel/manager/apk_sign.c
 
