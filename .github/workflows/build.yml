@@ -11,7 +11,7 @@ on:
         description: "KSU Source"
         type: choice
         required: true
-        default: "MidoriKSU/KernelSU:main"
+        default: "backslashxx/KernelSU:master"
         options:
           - "MidoriKSU/KernelSU:main"
           - "backslashxx/KernelSU:master"
@@ -20,7 +20,7 @@ on:
         description: "Hook Mode"
         type: choice
         required: true
-        default: "manual"
+        default: "hybridized"
         options:
           - manual
           - hybridized
@@ -32,7 +32,7 @@ on:
         default: "MidoriSU"
         options:
           - MidoriSU
-          - KernelSU (backslashxx)
+          - KernelSU
 
 jobs:
   build_kernel:
