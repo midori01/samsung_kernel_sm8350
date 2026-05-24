@@ -91,7 +91,7 @@ jobs:
           elif [ "${{ github.event.inputs.hook_mode }}" = "hybridized" ]; then
             patch -p1 < .github/patches/scope-minimized-manual-hooks-v2.2.patch
           else
-            echo "CONFIG_KSU_TAMPER_SYSCALL_TABLE=y" >> arch/arm64/configs/o1q_defconfig
+            echo "KSU_HACK_ARM64_BRANCH_LINK=y" >> arch/arm64/configs/o1q_defconfig
           fi
 
       - name: Apply Midori Customization
